@@ -112,6 +112,130 @@ def search_youtube(query: str) -> List[Dict[str, str]]:
         return f"Error: {str(e)}"
     
 search_out=search_youtube.run("Generative AI")
-display(JSON(search_out))
+
+display(search_out)
 
 tools.append(search_youtube)
+
+@tool
+def get_full_metadata(url: str) -> dict:
+    """Extract metadata given a YouTube URL, including title, views, duration, channel, likes, comments, and chapters."""
+    with yt_dlp.YoutubeDL({'quiet': True, 'logger': yt_dpl_logger}) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return {
+            'title': info.get('title'),
+            'views': info.get('view_count'),
+            'duration': info.get('duration'),
+            'channel': info.get('uploader'),
+            'likes': info.get('like_count'),
+            'comments': info.get('comment_count'),
+            'chapters': info.get('chapters', [])
+        }
+        
+meta_data=get_full_metadata.run("https://www.youtube.com/watch?v=T-D1OfcDW1M")
+
+display(meta_data)
+
+tools.append(get_full_metadata)
+
+@tool
+def get_thumbnails(url: str) -> List[Dict]:
+    """
+    Get available thumbnails for a YouTube video using its URL.
+    
+    Args:
+        url (str): YouTube video URL (any format)
+        
+    Returns:
+        List of dictionaries with thumbnail URLs and resolutions in YouTube's native order
+    """
+    
+    try:
+        with yt_dlp.YoutubeDL({'quiet': True, 'logger': yt_dpl_logger}) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            thumbnails = []
+            for t in info.get('thumbnails', []):
+                if 'url' in t:
+                    thumbnails.append({
+                        "url": t['url'],
+                        "width": t.get('width'),
+                        "height": t.get('height'),
+                        "resolution": f"{t.get('width', '')}x{t.get('height', '')}".strip('x')
+                    })
+            
+            return thumbnails
+
+    except Exception as e:
+        return [{"error": f"Failed to get thumbnails: {str(e)}"}]
+    
+
+thumbnails=get_thumbnails.run("https://www.youtube.com/watch?v=qWHaMrR5WHQ")
+
+display(thumbnails)
+
+tools.append(get_thumbnails)
+
+llm_with_tools = llm.bind_tools(tools)
+
+for tool in tools:
+    schema = {
+   "name": tool.name,
+   "description": tool.description,
+   "parameters": tool.args_schema.schema() if tool.args_schema else {},
+   "return": tool.return_type if hasattr(tool, "return_type") else None}
+    display(schema)
+
+query = "I want to summarize youtube video: https://www.youtube.com/watch?v=T-D1OfcDW1M in english"
+print(query)
+
+messages = [HumanMessage(content = query)]
+print(messages)
+
+response_1 = llm_with_tools.invoke(messages)
+response_1
+
+messages.append(response_1)
+
+tool_mapping = {
+    "get_thumbnails" : get_thumbnails,
+    "extract_video_id": extract_video_id,
+    "fetch_transcript": fetch_transcript,
+    "search_youtube": search_youtube,
+    "get_full_metadata": get_full_metadata
+}
+
+tool_calls_1 = response_1.tool_calls
+display(tool_calls_1)
+
+tool_name=tool_calls_1[0]['name']
+print(tool_name)
+
+tool_call_id =tool_calls_1[0]['id']
+print(tool_call_id)
+
+args=tool_calls_1[0]['args']
+print(args)
+
+my_tool=tool_mapping[tool_calls_1[0]['name']]
+
+video_id =my_tool.invoke(tool_calls_1[0]['args'])
+video_id
+
+messages.append(ToolMessage(content = video_id, tool_call_id = tool_calls_1[0]['id']))
+
+response_2 = llm_with_tools.invoke(messages)
+response_2
+
+messages.append(response_2)
+
+tool_calls_2 = response_2.tool_calls
+tool_calls_2
+
+fetch_transcript_tool_output = tool_mapping[tool_calls_2[0]['name']].invoke(tool_calls_2[0]['args'])
+fetch_transcript_tool_output
+
+messages.append(ToolMessage(content = fetch_transcript_tool_output, tool_call_id = tool_calls_2[0]['id']))
+
+summary = llm_with_tools.invoke(messages)
+print(summary)
